@@ -1,0 +1,6 @@
+[submodule "rust-fxr-reloader"]
+	path = rust-fxr-reloader
+	url = https://github.com/EvenTorset/rust-fxr-reloader.git
+[submodule "libER"]
+	path = libER
+	url = https://github.com/Dasaav-dsv/libER.git
