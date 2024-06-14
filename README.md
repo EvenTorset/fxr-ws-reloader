@@ -19,7 +19,7 @@ If you are using [Elden Mod Loader](https://www.nexusmods.com/eldenring/mods/117
 
 ## Configuration
 The JSON config file that comes with the DLL has some options that you can change to your needs:
-```json
+```jsonc
 {
   /*
     Set this to true to enable the console, which will display extra
