@@ -16,10 +16,12 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_library("fxr-ws-reloader" SHARED "fxr-ws-reloader.cpp")
 target_link_libraries("fxr-ws-reloader"
-  PUBLIC
-    libER_static
   PRIVATE
+    libER_static
     websocketpp::websocketpp
     nlohmann_json::nlohmann_json
     rust_fxr_reloader
 )
+
+target_compile_definitions("fxr-ws-reloader" PUBLIC GAME=${GAME})
+set_target_properties("fxr-ws-reloader" PROPERTIES OUTPUT_NAME ${DLL_NAME})

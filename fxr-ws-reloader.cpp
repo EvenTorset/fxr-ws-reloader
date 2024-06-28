@@ -5,11 +5,24 @@
 #include <iostream>
 #include <fstream>
 
-#include <dantelion2/system.hpp>
-#include <detail/windows.inl>
-#include <coresystem/file/file.hpp>
-#include <coresystem/cs_param.hpp>
-#include <param/param.hpp>
+/*
+  Setting GAME to 1 would make this work for Sekiro, but without support for
+  param editing, since that's from libER. However, as far as I know, Sekiro
+  doesn't have a good DLL loader yet. Mod Engine (and others) only allow chain-
+  loading other dinput8.dll hooks. Support for that could be added, but it
+  currently does not have it.
+*/
+#ifndef GAME
+  #define GAME 2 // Elden Ring
+#endif
+
+#if GAME == 2 // Elden Ring
+  #include <dantelion2/system.hpp>
+  #include <detail/windows.inl>
+  #include <coresystem/file/file.hpp>
+  #include <coresystem/cs_param.hpp>
+  #include <param/param.hpp>
+#endif
 
 #include <websocketpp/config/asio_no_tls.hpp>
 #include <websocketpp/server.hpp>
@@ -26,7 +39,6 @@ typedef websocketpp::server<websocketpp::config::asio> server;
 
 server ws_server;
 
-const LPCSTR ER_TITLE = "ELDEN RING\x99";
 const std::string LOG_PREFIX = "[fxr-ws-reloader] ";
 
 std::string getDLLDirPath() {
@@ -102,25 +114,27 @@ void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg) {
       respond(hdl, req, "success");
       break;
     }
-    case RequestType::SetResidentSFX: {
-      from::CS::SoloParamRepositoryImp::wait_for_params(-1);
-      int weaponID = req["weapon"];
-      bool foundWeapon = false;
-      for (auto [id, row] : from::param::EquipParamWeapon) {
-        if (id == weaponID) {
-          row.residentSfxId_1 = req["sfx"];
-          row.residentSfx_DmyId_1 = req["dmy"];
-          foundWeapon = true;
-          break;
+    #if GAME == 2 // Elden Ring
+      case RequestType::SetResidentSFX: {
+        from::CS::SoloParamRepositoryImp::wait_for_params(-1);
+        int weaponID = req["weapon"];
+        bool foundWeapon = false;
+        for (auto [id, row] : from::param::EquipParamWeapon) {
+          if (id == weaponID) {
+            row.residentSfxId_1 = req["sfx"];
+            row.residentSfx_DmyId_1 = req["dmy"];
+            foundWeapon = true;
+            break;
+          }
         }
+        if (foundWeapon) {
+          respond(hdl, req, "success");
+        } else {
+          respond(hdl, req, "Weapon not found");
+        }
+        break;
       }
-      if (foundWeapon) {
-        respond(hdl, req, "success");
-      } else {
-        respond(hdl, req, "Weapon not found");
-      }
-      break;
-    }
+    #endif
     default:
       std::cout << LOG_PREFIX << "Unrecognized request type: " << req["type"] << '\n';
       respond(hdl, req, "Unrecognized request type");
@@ -136,7 +150,9 @@ void reloader_main() {
     con_allocate(false);
   }
 
-  from::DLSY::wait_for_system(-1);
+  #if GAME == 2 // Elden Ring
+    from::DLSY::wait_for_system(-1);
+  #endif
 
   ws_server.set_message_handler(&on_message);
   ws_server.set_access_channels(websocketpp::log::alevel::none);
