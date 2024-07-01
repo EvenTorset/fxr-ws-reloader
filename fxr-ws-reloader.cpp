@@ -5,18 +5,11 @@
 #include <iostream>
 #include <fstream>
 
-/*
-  Setting GAME to 1 would make this work for Sekiro, but without support for
-  param editing, since that's from libER. However, as far as I know, Sekiro
-  doesn't have a good DLL loader yet. Mod Engine (and others) only allow chain-
-  loading other dinput8.dll hooks. Support for that could be added, but it
-  currently does not have it.
-*/
-#ifndef GAME
-  #define GAME 2 // Elden Ring
+#if defined(INCLUDE_LIBER) && INCLUDE_LIBER == 0
+  #undef INCLUDE_LIBER
 #endif
 
-#if GAME == 2 // Elden Ring
+#ifdef INCLUDE_LIBER
   #include <dantelion2/system.hpp>
   #include <detail/windows.inl>
   #include <coresystem/file/file.hpp>
@@ -114,7 +107,7 @@ void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg) {
       respond(hdl, req, "success");
       break;
     }
-    #if GAME == 2 // Elden Ring
+    #ifdef INCLUDE_LIBER
       case RequestType::SetResidentSFX: {
         from::CS::SoloParamRepositoryImp::wait_for_params(-1);
         int weaponID = req["weapon"];
@@ -134,6 +127,11 @@ void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg) {
         }
         break;
       }
+    #else
+      case RequestType::SetResidentSFX: {
+        respond(hdl, req, "Param editing requires libER");
+        break;
+      }
     #endif
     default:
       std::cout << LOG_PREFIX << "Unrecognized request type: " << req["type"] << '\n';
@@ -150,7 +148,7 @@ void reloader_main() {
     con_allocate(false);
   }
 
-  #if GAME == 2 // Elden Ring
+  #ifdef INCLUDE_LIBER
     from::DLSY::wait_for_system(-1);
   #endif
 

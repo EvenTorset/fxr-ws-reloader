@@ -23,5 +23,4 @@ target_link_libraries("fxr-ws-reloader"
     rust_fxr_reloader
 )
 
-target_compile_definitions("fxr-ws-reloader" PUBLIC GAME=${GAME})
-set_target_properties("fxr-ws-reloader" PROPERTIES OUTPUT_NAME ${DLL_NAME})
+target_compile_definitions("fxr-ws-reloader" PUBLIC INCLUDE_LIBER=${INCLUDE_LIBER})
