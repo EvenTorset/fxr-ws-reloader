@@ -109,7 +109,7 @@ void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg) {
     }
     #ifdef INCLUDE_LIBER
       case RequestType::SetResidentSFX: {
-        from::CS::SoloParamRepositoryImp::wait_for_params(-1);
+        from::CS::SoloParamRepository::wait_for_params(-1);
         int weaponID = req["weapon"];
         bool foundWeapon = false;
         for (auto [id, row] : from::param::EquipParamWeapon) {
