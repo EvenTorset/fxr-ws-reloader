@@ -111,18 +111,19 @@ void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg) {
       case RequestType::SetResidentSFX: {
         from::CS::SoloParamRepository::wait_for_params(-1);
         int weaponID = req["weapon"];
-        bool foundWeapon = false;
-        for (auto [id, row] : from::param::EquipParamWeapon) {
-          if (id == weaponID) {
-            row.residentSfxId_1 = req["sfx"];
-            row.residentSfx_DmyId_1 = req["dmy"];
-            foundWeapon = true;
-            break;
-          }
-        }
-        if (foundWeapon) {
+        auto [row, row_exists] = from::param::EquipParamWeapon[weaponID];
+        if (row_exists) {
+          int sfxID = req["sfx"];
+          int dmyID = req["dmy"];
+          row.residentSfxId_1 = sfxID;
+          row.residentSfx_DmyId_1 = dmyID;
+          std::cout << LOG_PREFIX <<
+            "Edited weapon resident sfx and dmy ID: Weapon: " << weaponID <<
+            ", sfx: " << sfxID <<
+            ", dmy: " << dmyID << '\n';
           respond(hdl, req, "success");
         } else {
+          std::cout << LOG_PREFIX << "Weapon not found:" << weaponID << '\n';
           respond(hdl, req, "Weapon not found");
         }
         break;
