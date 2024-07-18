@@ -15,6 +15,8 @@
   #include <coresystem/file/file.hpp>
   #include <coresystem/cs_param.hpp>
   #include <param/param.hpp>
+
+  #include "param_util.hpp"
 #endif
 
 #include <websocketpp/config/asio_no_tls.hpp>
@@ -69,13 +71,20 @@ std::string getEXEName() {
 enum RequestType {
   ReloadFXR = 0,
   SetResidentSFX = 1,
+  SetParams = 2,
+  ListParams = 3,
+  ListRows = 4,
+  GetParamRow = 5,
 };
 
-void respond(websocketpp::connection_hdl hdl, json req, std::string status) {
+void respond(websocketpp::connection_hdl hdl, json req, std::string status, std::optional<json> data = std::nullopt) {
   json res {
     { "requestID", req["requestID"] },
     { "status", status },
   };
+  if (data.has_value()) {
+    res["data"] = data.value();
+  }
   ws_server.send(hdl, res.dump(), websocketpp::frame::opcode::text);
 }
 
@@ -125,6 +134,61 @@ void on_message(websocketpp::connection_hdl hdl, server::message_ptr msg) {
         } else {
           std::cout << LOG_PREFIX << "Weapon not found:" << weaponID << '\n';
           respond(hdl, req, "Weapon not found");
+        }
+        break;
+      }
+      case RequestType::SetParams: {
+        try {
+          from::CS::SoloParamRepository::wait_for_params(-1);
+          for (auto& [param, rows] : req["params"].items()) {
+            auto it = paramRowActionsMap.find(param);
+            if (it != paramRowActionsMap.end()) {
+              for (auto& [rowID, fields] : rows.items()) {
+                it->second.modify(std::stoi(rowID), fields);
+              }
+            }
+            std::cout << LOG_PREFIX << "Param edited: " << param << '\n';
+          }
+          respond(hdl, req, "success");
+        } catch (const std::runtime_error& e) {
+          std::cout << LOG_PREFIX << "Error while modifying params: " << e.what() << '\n';
+          respond(hdl, req, e.what());
+        } catch (const std::exception& e) {
+          std::cout << LOG_PREFIX << "Error while modifying params: " << e.what() << '\n';
+          respond(hdl, req, e.what());
+        } catch (...) {
+          std::cout << LOG_PREFIX << "Something went wrong while modifying params." << '\n';
+          respond(hdl, req, "Something went wrong");
+        }
+        break;
+      }
+      case RequestType::ListParams: {
+        respond(hdl, req, "success", paramNameList);
+        std::cout << LOG_PREFIX << "Responded with param name list" << '\n';
+        break;
+      }
+      case RequestType::ListRows: {
+        from::CS::SoloParamRepository::wait_for_params(-1);
+        std::string param = req["param"];
+        auto it = paramRowActionsMap.find(param);
+        if (it != paramRowActionsMap.end()) {
+          json ids = it->second.listRows();
+          respond(hdl, req, "success", ids);
+          std::cout << LOG_PREFIX << "Responded with row IDs for param: " << param << '\n';
+        } else {
+          respond(hdl, req, "Param not found");
+        }
+        break;
+      }
+      case RequestType::GetParamRow: {
+        from::CS::SoloParamRepository::wait_for_params(-1);
+        std::string param = req["param"];
+        auto it = paramRowActionsMap.find(param);
+        if (it != paramRowActionsMap.end()) {
+          respond(hdl, req, "success", it->second.rowJSON(req["row"]));
+          std::cout << LOG_PREFIX << "Responded with param row: " << param << "/" << req["row"] << '\n';
+        } else {
+          respond(hdl, req, "Param not found");
         }
         break;
       }

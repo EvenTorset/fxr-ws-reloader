@@ -14,6 +14,8 @@ corrosion_import_crate(MANIFEST_PATH rust-fxr-reloader/Cargo.toml)
 add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
 set(CMAKE_CXX_STANDARD 20)
 
+add_compile_options(/bigobj)
+
 add_library("fxr-ws-reloader" SHARED "fxr-ws-reloader.cpp")
 target_link_libraries("fxr-ws-reloader"
   PRIVATE
