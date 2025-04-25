@@ -1,0 +1,20 @@
+[package]
+name = "fxr-ws-reloader"
+version = "3.0.0-preview1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tokio = { version = "1.28", features = ["full"] }
+tokio-tungstenite = "0.19"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+futures-util = "0.3"
+once_cell = "1.17"
+windows = { version = "0.48", features = ["Win32_Foundation", "Win32_System_LibraryLoader"] }
+base64 = "0.21"
+patcher = { path = "fxr_reloader/patcher" }
+eldenring = "0.6"
+eldenring-util = "0.6"

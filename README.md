@@ -1,7 +1,7 @@
 # FXR WebSocket Reloader
 This is a DLL mod for Elden Ring that allows FXR files to be reloaded while the game is still running.
 
-It hosts a WebSocket server that performs the reload when requested to. It can also be requested to change the resident SFX param fields of a weapon, which can be used to respawn SFX.
+It hosts a WebSocket server that performs the reload when requested to. It can also be requested to change the resident SFX param fields of a weapon, or the SFX and VFX for a SpEffect, which can be used to respawn effects.
 
 ## Installation
 You can download the mod from the [Releases page](https://github.com/EvenTorset/fxr-ws-reloader/releases/latest). To make the game load the DLL, you have two main options:
@@ -10,7 +10,7 @@ You can download the mod from the [Releases page](https://github.com/EvenTorset/
 If you use [Mod Engine 2](https://github.com/soulsmods/ModEngine2/releases/latest), you can place the DLL and its config file anywhere, and then open the `config_eldenring.toml` file in a text editor and add the path to the DLL file to the `external_dlls` list, like this:
 ```toml
 external_dlls = [
-  "C:\\your\\elden_ring\\dlls\\fxr-ws-reloader.dll"
+  "C:\\your\\elden_ring\\dlls\\fxr_ws_reloader.dll"
 ]
 ```
 
@@ -18,19 +18,9 @@ external_dlls = [
 If you are using [Elden Mod Loader](https://www.nexusmods.com/eldenring/mods/117) to load DLL mods, simply place the DLL and its config file in your mods folder.
 
 ## Configuration
-The JSON config file that comes with the DLL has some options that you can change to your needs:
+The JSON config file that comes with the DLL can be modified to change the port number used by the WebSocket server:
 ```jsonc
 {
-  /*
-    Set this to true to enable the console, which will display extra
-    information about what the DLL is doing.
-  */
-  "log": false,
-
-  /*
-    This is the port number used for the WebSocket server. Feel free to change
-    it to whatever you'd like if you can't use the default for some reason.
-  */
   "port": 24621
 }
 ```
@@ -45,29 +35,38 @@ This library isn't the only thing that can control the reloader, however. If you
 
 ### Requests
 All requests to the WebSocket server should be JSON objects that include at least two properties:
-- `requestID`: A string used to identify the request. The server doesn't use this for anything. It simply includes it in the response to that request so that the client can know what request the response was for.
+- `request_id`: A string used to identify the request. The server doesn't use this for anything. It simply includes it in the response to that request so that the client can know what request the response was for.
 - `type`: The type of the request, which tells the server what to do. It has two valid values:
-  - `0`: Reload FXR. This patches the definitions for the given FXR so that any new instances of it will use the new FXR. When this request type is used, the request needs one additional property:
-    - `data`: The binary data of the FXR encoded as a base64 string.
-  - `1`: Set resident SFX. This edits the resident SFX param fields for a given weapon based on the properties of the request. When this request type is used, the request needs three additional properties:
+  - `get_version`: This responds with the version number of the reloader DLL.
+  - `get_game`: This responds with the name of the game that the reloader is running in. This will be either `EldenRing` or `ArmoredCore6`. Note that AC6 is not yet supported, even though the reloader can be loaded by it.
+  - `reload_fxrs`: This patches the definitions for the given FXR files so that any new instances of it will use the new FXRs. When this request type is used, the request needs one additional property:
+    - `fxrs`: An array of base64 strings of the binary data of the FXRs.
+  - `set_resident_sfx`: This edits the resident SFX param fields for a given weapon based on the properties of the request. The fields are first set to `-1` and then to the given value after a very short delay, which causes the SFX to respawn. When this request type is used, the request needs three additional properties:
     - `weapon`: The numerical ID of the weapon to edit. You can find a list of these here: https://github.com/MaxTheMiracle/Dark-Souls-3-Parts-Files/blob/master/Elden%20Ring
-    - `sfx`: The numerical SFX ID to change the `residentSfxId_1` param field to.
-    - `dmy`: The numerical dummy poly ID to change the `residentSfx_DmyId_1` param field to.
+    - `sfx`: The numerical SFX ID to change the `resident_sfx_id_1` param field to.
+    - `dmy`: The numerical dummy poly ID to change the `resident_sfx_dmy_id_1` param field to.
+  - `set_sp_effect_sfx`: This edits the SFX and VFX param fields for a given SpEffect based on the properties of the request. The VFX is first set to `-1` and then to the given value after a very short delay, which causes the SFX to respawn. When this request type is used, the request needs three or four additional properties:
+    - `spEffect`: The numerical ID of the weapon to edit. You can find a list of these here: https://github.com/MaxTheMiracle/Dark-Souls-3-Parts-Files/blob/master/Elden%20Ring
+    - `sfx`: The numerical SFX ID to change the `midst_sfx_id` param field to.
+    - `dmy`: The numerical dummy poly ID to change the `midst_dmy_id` param field to.
+    - `vfx`: (Optional) The numerical VFX ID to change the `vfx_id` param field to. If not given, the `vfx_id` will be 
 
 #### Reload FXR example request payload
 ```json
 {
-  "requestID": "example_request_1",
-  "type": 0,
-  "data": "<base64 goes here>"
+  "request_id": "example_request_1",
+  "type": "reload_fxrs",
+  "fxrs": [
+    "<base64 goes here>"
+  ]
 }
 ```
 
 #### Set resident SFX example request payload
 ```json
 {
-  "requestID": "example_request_2",
-  "type": 1,
+  "request_id": "example_request_2",
+  "type": "set_resident_sfx",
   "weapon": 24050000,
   "sfx": 402030,
   "dmy": 206
@@ -75,20 +74,22 @@ All requests to the WebSocket server should be JSON objects that include at leas
 ```
 
 ### Responses
-The server will respond to all requests sent to it with a JSON object containing the request ID and a status message. The status message will always be "success" if the process succeeded. If it failed, the status message will describe why it failed in some way.
+The server will respond to all requests sent to it with a JSON object containing the request ID and a "success" property that is true only if it successfully performed the action, and message with status information.
 
 #### Success example response
 ```json
 {
-  "requestID": "example_request_2",
-  "status": "success"
+  "request_id": "example_request_2",
+  "success": true,
+  "message": "Successfully set resident SFX for weapon 24050000"
 }
 ```
 
 #### Error example response
 ```json
 {
-  "requestID": "example_request_1",
-  "status": "Invalid FXR"
+  "request_id": "example_request_1",
+  "success": false,
+  "message": "Failed to patch FXR: example error"
 }
 ```
