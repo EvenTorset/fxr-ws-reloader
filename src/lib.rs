@@ -21,10 +21,7 @@ struct Config {
 }
 
 #[derive(Deserialize, Debug)]
-#[serde(rename_all = "snake_case")]
 enum RequestType {
-  GetVersion,
-  GetGame,
   #[serde(rename = "reload_fxrs")]
   ReloadFXRs,
   #[serde(rename = "set_resident_sfx")]
@@ -132,6 +129,25 @@ async fn handle_connection(stream: TcpStream) {
   let ws_stream = accept_async(stream).await.unwrap();
   let (mut write, mut read) = ws_stream.split();
 
+  // Send server info
+  let game = match patcher::game::detection::detect_running_game() {
+    Ok(patcher::game::detection::RunningGame::EldenRing) => "EldenRing",
+    Ok(patcher::game::detection::RunningGame::ArmoredCore6) => "ArmoredCore6",
+    Err(e) => {
+      eprintln!("Failed to detect game: {}", e);
+      return;
+    }
+  };
+  let server_info = serde_json::json!({
+    "type": "server_info",
+    "version": env!("CARGO_PKG_VERSION"),
+    "game": game
+  });
+  if let Err(e) = write.send(Message::Text(server_info.to_string())).await {
+    eprintln!("Failed to send server info: {}", e);
+    return;
+  }
+
   let params_sender = PARAM_REQ_CHANNEL.get().unwrap().0.clone();
 
   while let Some(msg) = read.next().await {
@@ -159,35 +175,6 @@ async fn handle_connection(stream: TcpStream) {
 
 async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequestType>) -> Response {
   match request.request_type {
-    RequestType::GetVersion => {
-      Response {
-        request_id: request.request_id,
-        success: true,
-        message: format!("Reloader DLL version: {}", env!("CARGO_PKG_VERSION")),
-        data: Some(serde_json::json!({
-          "version": env!("CARGO_PKG_VERSION"),
-        })),
-      }
-    }
-    RequestType::GetGame => {
-      let game = match patcher::game::detection::detect_running_game() {
-        Ok(patcher::game::detection::RunningGame::EldenRing) => "EldenRing",
-        Ok(patcher::game::detection::RunningGame::ArmoredCore6) => "ArmoredCore6",
-        Err(e) => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: format!("Failed to detect game: {}", e),
-          data: None,
-        }
-      };
-
-      Response {
-        request_id: request.request_id,
-        success: true,
-        message: format!("Game: {}", game),
-        data: Some(serde_json::json!({"game": game})),
-      }
-    }
     RequestType::ReloadFXRs => {
       if let Some(fxrs) = request.params.get("fxrs") {
         if let Some(fxr_array) = fxrs.as_array() {

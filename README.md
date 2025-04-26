@@ -37,8 +37,6 @@ This library isn't the only thing that can control the reloader, however. If you
 All requests to the WebSocket server should be JSON objects that include at least two properties:
 - `request_id`: A string used to identify the request. The server doesn't use this for anything. It simply includes it in the response to that request so that the client can know what request the response was for.
 - `type`: The type of the request, which tells the server what to do. It has two valid values:
-  - `get_version`: This responds with the version number of the reloader DLL.
-  - `get_game`: This responds with the name of the game that the reloader is running in. This will be either `EldenRing` or `ArmoredCore6`. Note that AC6 is not yet supported, even though the reloader can be loaded by it.
   - `reload_fxrs`: This patches the definitions for the given FXR files so that any new instances of it will use the new FXRs. When this request type is used, the request needs one additional property:
     - `fxrs`: An array of base64 strings of the binary data of the FXRs.
   - `set_resident_sfx`: This edits the resident SFX param fields for a given weapon based on the properties of the request. The fields are first set to `-1` and then to the given value after a very short delay, which causes the SFX to respawn. When this request type is used, the request needs three additional properties:
@@ -91,5 +89,15 @@ The server will respond to all requests sent to it with a JSON object containing
   "request_id": "example_request_1",
   "success": false,
   "message": "Failed to patch FXR: example error"
+}
+```
+
+#### Connection response
+When a client connects to the server, it will immediately send some information about the server and its environment to the client with a special message that doesn't follow the standard response structure. This can be detected by checking if the message contains a `type` property with the value `server_info`.
+```json
+{
+  "type": "server_info",
+  "version": "3.0.0",
+  "game": "EldenRing"
 }
 ```
