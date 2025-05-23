@@ -28,9 +28,21 @@ enum RequestType {
   SetResidentSFX,
   #[serde(rename = "set_sp_effect_sfx")]
   SetSpEffectSFX,
+  #[serde(rename = "get_fxr")]
+  GetFXR,
+  #[serde(rename = "list_fxrs")]
+  ListFXRs,
   #[serde(other)]
   Unknown,
 }
+
+const REQUEST_TYPE_NAMES: &[&str] = &[
+  "reload_fxrs",
+  "set_resident_sfx",
+  "set_sp_effect_sfx",
+  "get_fxr",
+  "list_fxrs",
+];
 
 impl Default for RequestType {
   fn default() -> Self {
@@ -324,12 +336,59 @@ async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequ
         data: None,
       }
     }
+    RequestType::GetFXR => {
+      let fxr_id = match request.params.get("id").and_then(|v| v.as_u64()) {
+        Some(id) => id as u32,
+        None => return Response {
+          request_id: request.request_id,
+          success: false,
+          message: "Missing or invalid id parameter".to_string(),
+          data: None,
+        }
+      };
+
+      let fxr_bytes = match patcher::extract_fxr(fxr_id) {
+        Ok(bytes) => bytes,
+        Err(e) => return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("Failed to extract FXR: {}", e),
+          data: None,
+        }
+      };
+
+      let base64_str = general_purpose::STANDARD.encode(&fxr_bytes);
+      Response {
+        request_id: request.request_id,
+        success: true,
+        message: "Successfully extracted FXR".to_string(),
+        data: Some(serde_json::json!({ "fxr": base64_str })),
+      }
+    }
+    RequestType::ListFXRs => {
+      let fxr_ids = match patcher::list_fxr_ids() {
+        Ok(ids) => ids,
+        Err(e) => return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("Failed to list FXRs: {}", e),
+          data: None,
+        }
+      };
+
+      Response {
+        request_id: request.request_id,
+        success: true,
+        message: "Successfully listed FXRs".to_string(),
+        data: Some(serde_json::json!({ "fxrs": fxr_ids })),
+      }
+    }
     RequestType::Unknown => Response {
       request_id: request.request_id,
       success: false,
-      message: format!("Invalid request type. Valid types are: get_version, get_game, reload_fxrs, set_resident_sfx, set_sp_effect_sfx"),
+      message: format!("Invalid request type. Valid types are: {}", REQUEST_TYPE_NAMES.join(", ")),
       data: None,
-    },
+    }
   }
 }
 

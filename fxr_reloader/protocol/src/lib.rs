@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error, Serialize, Deserialize)]
-pub enum PatchFxrError {
+pub enum FxrManagerError {
     #[error("Could not locate CSSfx singleton. {0}")]
     CSSfxSingletonMissing(#[from] LookupError),
     #[error("Could not locate CSSfx instance")]
@@ -13,6 +13,8 @@ pub enum PatchFxrError {
     GameDetectionError(#[from] GameDetectionError),
     #[error("Could not match pattern instructions. {0}")]
     InstructionPattern(String),
+    #[error("Could not find FXR with ID {0}")]
+    FxrNotFound(u32),
 }
 
 #[derive(Debug, Error, Serialize, Deserialize)]
@@ -58,5 +60,3 @@ pub enum GameDetectionError {
     #[error("Failed to find the .text section.")]
     MissingTextSection,
 }
-
-pub const AGENT_DLL_NAME: &str = "fxr_reloader_agent";

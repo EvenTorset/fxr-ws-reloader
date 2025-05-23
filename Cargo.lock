@@ -442,7 +442,7 @@ dependencies = [
 
 [[package]]
 name = "fxr-ws-reloader"
-version = "3.0.0-preview2"
+version = "3.0.0-preview3"
 dependencies = [
  "base64",
  "eldenring",
