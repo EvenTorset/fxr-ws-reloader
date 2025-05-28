@@ -47,7 +47,10 @@ All requests to the WebSocket server should be JSON objects that include at leas
     - `spEffect`: The numerical ID of the weapon to edit. You can find a list of these here: https://github.com/MaxTheMiracle/Dark-Souls-3-Parts-Files/blob/master/Elden%20Ring
     - `sfx`: The numerical SFX ID to change the `midst_sfx_id` param field to.
     - `dmy`: The numerical dummy poly ID to change the `midst_dmy_id` param field to.
-    - `vfx`: (Optional) The numerical VFX ID to change the `vfx_id` param field to. If not given, the `vfx_id` will be 
+    - `vfx`: (Optional) The numerical VFX ID to change the `vfx_id` param field to. If not given, the `vfx_id` will not be changed.
+  - `get_fxr`: This will extract a loaded FXR file from the game's memory and send it back base64-encoded. When this request type is used, the request needs one additional property:
+    - `id`: The ID of the FXR to extract.
+  - `list_fxrs`: This will send back a list of all loaded FXR IDs.
 
 #### Reload FXR example request payload
 ```json
