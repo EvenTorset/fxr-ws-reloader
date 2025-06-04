@@ -219,7 +219,7 @@ struct FxrResourceContainer {
 #[derive(Debug)]
 struct GXFfxGraphicsResourceManager {
   pub vftable: u64,
-  pub unk: [u8; 0x158],
+  pub unk: [u8; 0x58],
   pub resource_container: &'static mut FxrResourceContainer,
 }
 
