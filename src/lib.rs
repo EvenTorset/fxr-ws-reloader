@@ -11,6 +11,7 @@ use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW
 use base64::{engine::general_purpose, Engine as _};
 use eldenring::fd4::FD4ParamRepository;
 use eldenring_util::singleton;
+use patcher::game::game_data::GameData;
 
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 static PARAM_REQ_CHANNEL: OnceCell<(mpsc::Sender<ParamsRequestType>, mpsc::Receiver<Response>)> = OnceCell::new();
@@ -141,19 +142,27 @@ async fn handle_connection(stream: TcpStream) {
   let ws_stream = accept_async(stream).await.unwrap();
   let (mut write, mut read) = ws_stream.split();
 
-  // Send server info
-  let game = match patcher::game::detection::detect_running_game() {
-    Ok(patcher::game::detection::RunningGame::EldenRing) => "EldenRing",
-    Ok(patcher::game::detection::RunningGame::ArmoredCore6) => "ArmoredCore6",
+  let game_data = match patcher::game::detection::detect_running_game() {
+    Ok(data) => data,
     Err(e) => {
-      eprintln!("Failed to detect game: {}", e);
+      let response = serde_json::json!({
+        "type": "server_info",
+        "version": env!("CARGO_PKG_VERSION"),
+        "error": format!("Failed to detect game: {}", e)
+      });
+      if let Err(e) = write.send(Message::Text(response.to_string())).await {
+        eprintln!("Failed to send error message: {}", e);
+        return;
+      }
       return;
     }
   };
+
   let server_info = serde_json::json!({
     "type": "server_info",
     "version": env!("CARGO_PKG_VERSION"),
-    "game": game
+    "game": game_data.name,
+    "features": game_data.features
   });
   if let Err(e) = write.send(Message::Text(server_info.to_string())).await {
     eprintln!("Failed to send server info: {}", e);
@@ -166,7 +175,7 @@ async fn handle_connection(stream: TcpStream) {
     if let Ok(msg) = msg {
       if let Message::Text(text) = msg {
         let response = match serde_json::from_str::<Request>(&text) {
-          Ok(request) => handle_request(request, params_sender.clone()).await,
+          Ok(request) => handle_request(request, params_sender.clone(), game_data).await,
           Err(e) => Response {
             request_id: ":ERROR:".into(),
             success: false,
@@ -185,9 +194,21 @@ async fn handle_connection(stream: TcpStream) {
   }
 }
 
-async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequestType>) -> Response {
+async fn handle_request(
+  request: Request,
+  params_sender: mpsc::Sender<ParamsRequestType>,
+  game_data: GameData
+) -> Response {
   match request.request_type {
     RequestType::ReloadFXRs => {
+      if !game_data.features.reload {
+        return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("FXR reloading is not supported in {}", game_data.name),
+          data: None,
+        };
+      }
       if let Some(fxrs) = request.params.get("fxrs") {
         if let Some(fxr_array) = fxrs.as_array() {
           let mut fxr_bytes: Vec<Vec<u8>> = Vec::new();
@@ -204,7 +225,7 @@ async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequ
               }
             }
           }
-          match patcher::patch_fxr(fxr_bytes) {
+          match patcher::patch_fxr(&game_data, fxr_bytes) {
             Ok(_) => Response {
               request_id: request.request_id,
               success: true,
@@ -236,6 +257,14 @@ async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequ
       }
     }
     RequestType::SetResidentSFX => {
+      if !game_data.features.params {
+        return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("Parameter modification is not supported in {}", game_data.name),
+          data: None,
+        };
+      }
       let weapon_id = match request.params.get("weapon").and_then(|v| v.as_u64()) {
         Some(id) => id as u32,
         None => return Response {
@@ -283,6 +312,14 @@ async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequ
       }
     }
     RequestType::SetSpEffectSFX => {
+      if !game_data.features.params {
+        return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("Parameter modification is not supported in {}", game_data.name),
+          data: None,
+        };
+      }
       let sp_effect_id = match request.params.get("spEffect").and_then(|v| v.as_u64()) {
         Some(id) => id as u32,
         None => return Response {
@@ -337,6 +374,14 @@ async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequ
       }
     }
     RequestType::GetFXR => {
+      if !game_data.features.extract {
+        return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("FXR extraction is not supported in {}", game_data.name),
+          data: None,
+        };
+      }
       let fxr_id = match request.params.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id as u32,
         None => return Response {
@@ -347,7 +392,7 @@ async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequ
         }
       };
 
-      let fxr_bytes = match patcher::extract_fxr(fxr_id) {
+      let fxr_bytes = match patcher::extract_fxr(&game_data, fxr_id) {
         Ok(bytes) => bytes,
         Err(e) => return Response {
           request_id: request.request_id,
@@ -366,7 +411,15 @@ async fn handle_request(request: Request, params_sender: mpsc::Sender<ParamsRequ
       }
     }
     RequestType::ListFXRs => {
-      let fxr_ids = match patcher::list_fxr_ids() {
+      if !game_data.features.extract {
+        return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("FXR listing is not supported in {}", game_data.name),
+          data: None,
+        };
+      }
+      let fxr_ids = match patcher::list_fxr_ids(&game_data) {
         Ok(ids) => ids,
         Err(e) => return Response {
           request_id: request.request_id,

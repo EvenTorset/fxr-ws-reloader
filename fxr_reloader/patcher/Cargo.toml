@@ -8,3 +8,6 @@ windows = { version = "0.48.0", features = ["Win32_System_LibraryLoader", "Win32
 broadsword = { git = "https://github.com/vswarte/broadsword.git" }
 protocol = { path = "../protocol" }
 pelite = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+paste = "1.0"
+once_cell = "1.21.3"

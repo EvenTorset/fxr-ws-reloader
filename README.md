@@ -101,6 +101,14 @@ When a client connects to the server, it will immediately send some information 
 {
   "type": "server_info",
   "version": "3.0.0",
-  "game": "EldenRing"
+  "game": "Nightreign",
+  "features": {
+    "reload": true,
+    "params": false,
+    "extract": true
+  }
 }
 ```
+
+## Credits
+This reloader is built on top of [vswarte](https://github.com/vswarte)'s [fxr-reloader](https://github.com/vswarte/fxr-reloader) and [eldenring-rs](https://github.com/vswarte/eldenring-rs) projects and I could not have made this without those!
