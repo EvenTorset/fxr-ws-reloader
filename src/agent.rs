@@ -170,28 +170,65 @@ async fn handle_connection(stream: TcpStream) {
   }
 
   let params_sender = PARAM_REQ_CHANNEL.get().unwrap().0.clone();
+  let (response_tx, mut response_rx) = mpsc::channel::<(String, Response)>(32);
+  let write_handle = tokio::spawn(async move {
+    while let Some((id, response)) = response_rx.recv().await {
+      let response_text = serde_json::to_string(&response).unwrap();
+      if let Err(e) = write.send(Message::Text(response_text)).await {
+        eprintln!("Error sending response for request {}: {}", id, e);
+        break;
+      }
+    }
+  });
 
   while let Some(msg) = read.next().await {
     if let Ok(msg) = msg {
       if let Message::Text(text) = msg {
-        let response = match serde_json::from_str::<Request>(&text) {
-          Ok(request) => handle_request(request, params_sender.clone(), game_data).await,
-          Err(e) => Response {
-            request_id: ":ERROR:".into(),
-            success: false,
-            message: format!("Invalid request format: {}", e),
-            data: None,
-          },
+        let request = match serde_json::from_str::<Request>(&text) {
+          Ok(request) => request,
+          Err(e) => {
+            let response = Response {
+              request_id: ":ERROR:".into(),
+              success: false,
+              message: format!("Invalid request format: {}", e),
+              data: None,
+            };
+            if let Err(e) = response_tx.send(("error".to_string(), response)).await {
+              eprintln!("Error sending error response: {}", e);
+              break;
+            }
+            continue;
+          }
         };
 
-        let response_text = serde_json::to_string(&response).unwrap();
-        if let Err(e) = write.send(Message::Text(response_text)).await {
-          eprintln!("Error sending response: {}", e);
-          break;
+        let request_id = request.request_id.clone();
+        let response_tx = response_tx.clone();
+        let params_sender = params_sender.clone();
+        let game_data = game_data.clone();
+
+        match request.request_type {
+          RequestType::SetResidentSFX | RequestType::SetSpEffectSFX | RequestType::ReloadFXRs => {
+            let response = handle_request(request, params_sender, game_data).await;
+            if let Err(e) = response_tx.send((request_id, response)).await {
+              eprintln!("Error sending response: {}", e);
+              break;
+            }
+          },
+          _ => {
+            tokio::spawn(async move {
+              let response = handle_request(request, params_sender, game_data).await;
+              if let Err(e) = response_tx.send((request_id, response)).await {
+                eprintln!("Error sending response: {}", e);
+              }
+            });
+          }
         }
       }
     }
   }
+
+  drop(response_tx);
+  let _ = write_handle.await;
 }
 
 async fn handle_request(
