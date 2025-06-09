@@ -3,11 +3,23 @@ This is a DLL mod for various From Software games that allows FXR files to be re
 
 It hosts a WebSocket server that performs the reload when requested to. It can also respawn effects by modifying the game params, or list or extract loaded FXRs from the game's memory.
 
+### Supported games
+- **Armored Core VI** 🔄️🪝
+- **Dark Souls III** 🔄️🪝
+- **Elden Ring** 🔄️🎛️🪝
+- **Elden Ring Nightreign** 🔄️🪝
+- **Sekiro** 🔄️🪝
+
+(May not work for all versions of the games. Features: 🔄️ = reload, 🎛️ = params, 🪝 = extract)
+
 ## Installation
 You can download the mod from the [Releases page](https://github.com/EvenTorset/fxr-ws-reloader/releases/latest). To make the game load the DLL, you have three main options:
 
 ### me3
 The recommended way to use the reloader is with [me3](https://github.com/garyttierney/me3/releases). If you have me3 installed, simply double click one of the me3 mod profiles included in the reloader zip file to launch the game with the reloader. If you want to use it along with other mods, open the profile in a text editor to see how the DLL is included.
+
+### reloader_injector.exe
+This is a program that comes with the reloader. Running it will inject the reloader into any running supported game. It will close immediately after injecting the DLL, so it might seem like it doesn't do anything, but it should work. For the server to start, you may need to tab back into the game for a few seconds after injecting.
 
 ### Mod Engine 2
 If you use [Mod Engine 2](https://github.com/soulsmods/ModEngine2/releases/latest), you can place the DLL and its config file anywhere, and then open the config TOML file for the game you want to add it to in a text editor and add the path to the DLL file to the `external_dlls` list, like this:

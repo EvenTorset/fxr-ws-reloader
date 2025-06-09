@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.1.0
+### Supported games
+- **Armored Core VI** 🔄️🪝
+- **Dark Souls III** 🔄️🪝
+- **Elden Ring** 🔄️🎛️🪝
+- **Elden Ring Nightreign** 🔄️🪝
+- **Sekiro** 🔄️🪝
+
+(May not work for all versions of the games. Features: 🔄️ = reload, 🎛️ = params, 🪝 = extract)
+
+### Changes
+- Added partial support (🔄️🪝) for **Dark Souls III** and **Sekiro**.
+- Added an injector program that can be run to inject the reloader into any of the supported games while they are running.
+  - Don't use it while EAC is active, I didn't test it, I don't know what would happen. Its primary use is to support DS3 and Sekiro, since they have limited support for DLL mods that aren't dinput8 hooks.
+  - You may need to tab back into the game after injecting to make the reloader server start up.
+
 ## v3.0.0
 ### Supported games
 - **Armored Core VI** 🔄️🪝
