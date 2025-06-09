@@ -12,6 +12,7 @@ use super::pattern::{
   WTF_FXR_PATTERN_NR,
 };
 use protocol::FxrManagerError;
+use std::collections::HashSet;
 use crate::{
   game::FxrManager,
   singleton::{self, DLRFLocatable},
@@ -438,7 +439,10 @@ pub fn get_game_data_by_title(product_name: &str) -> Option<GameData> {
 }
 
 pub fn get_supported_exe_names() -> Vec<&'static str> {
-  SUPPORTED_GAMES.iter()
+  let mut seen = HashSet::new();
+  SUPPORTED_GAMES
+    .iter()
     .flat_map(|g| g.exe_names.iter().copied())
+    .filter(|exe| seen.insert(*exe))
     .collect()
 }

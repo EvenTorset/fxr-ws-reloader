@@ -5,6 +5,11 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
+path = "src/agent.rs"
+
+[[bin]]
+name = "reloader-injector"
+path = "src/injector.rs"
 
 [dependencies]
 tokio = { version = "1.28", features = ["full"] }
@@ -18,3 +23,4 @@ base64 = "0.21"
 patcher = { path = "fxr_reloader/patcher" }
 eldenring = "0.6"
 eldenring-util = "0.6"
+dll-syringe = "0.16.0"
