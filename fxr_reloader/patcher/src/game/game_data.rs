@@ -416,6 +416,22 @@ define_games! {
       extract: true
     },
   },
+  Sekiro {
+    window_title: "Sekiro™: Shadows Die Twice",
+    exe_names: ["sekiro.exe"],
+    singleton_name: "SprjSfx",
+    cssfx_unk_size: 0x58,
+    gfx_manager_unk_size: 0x158,
+    res_con_pad_size: 0x20,
+    allocator_pattern: GET_ALLOCATOR_PATTERN,
+    patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
+    prepare_pattern: WTF_FXR_PATTERN,
+    features: {
+      reload: true,
+      params: false,
+      extract: true
+    },
+  },
   EldenRing {
     window_title: "ELDEN RING™",
     exe_names: ["eldenring.exe", "start_protected_game.exe"],
