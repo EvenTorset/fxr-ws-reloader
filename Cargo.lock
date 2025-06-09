@@ -441,6 +441,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "from-singleton"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39817769d3f0ec454107f15c8d65e34b77e183b401c9f76bd46329528c7b82bc"
+dependencies = [
+ "pelite",
+ "regex",
+ "windows 0.61.1",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1135,6 +1146,7 @@ name = "patcher"
 version = "0.4.1"
 dependencies = [
  "broadsword",
+ "from-singleton",
  "once_cell",
  "paste",
  "pelite",

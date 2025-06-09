@@ -2,7 +2,6 @@ use protocol::FxrManagerError;
 use game::game_data::GameData;
 
 pub mod game;
-mod singleton;
 
 pub fn patch_fxr(game_data: &GameData, fxrs: Vec<Vec<u8>>) -> Result<(), FxrManagerError> {
   let manager = game::game_data::fxr_manager_for(game_data)?;

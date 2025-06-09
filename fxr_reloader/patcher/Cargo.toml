@@ -11,3 +11,4 @@ pelite = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 paste = "1.0"
 once_cell = "1.21.3"
+from-singleton = "2.0.1"

@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use paste::paste;
 use super::pattern::{
   match_instruction_pattern,
-  // GET_ALLOCATOR_PATTERN_DS3,
+  GET_ALLOCATOR_PATTERN_DS3,
   GET_ALLOCATOR_PATTERN,
   PATCH_OFFSETS_PATTERN,
   WTF_FXR_PATTERN,
@@ -13,10 +13,9 @@ use super::pattern::{
 };
 use protocol::FxrManagerError;
 use std::collections::HashSet;
-use crate::{
-  game::FxrManager,
-  singleton::{self, DLRFLocatable},
-};
+use crate::game::FxrManager;
+use from_singleton::{FromSingleton, address_of};
+use std::borrow::Cow;
 
 type FxrAllocatorGetter = unsafe extern "system" fn() -> usize;
 type AllocateFxr = unsafe extern "system" fn(usize, usize, usize) -> usize;
@@ -85,16 +84,16 @@ pub struct FxrListNode {
   pub fxr_wrapper: *mut FxrWrapper,
 }
 
-#[repr(C)]
-#[derive(Debug)]
-pub struct FxrResourceContainer {
-  pub allocator1: u64,
-  pub scene_ctrl: u64,
-  pub unk10: u64,
-  pub allocator2: u64,
-  pub fxr_list_head: *mut FxrListNode,
-  pub resource_count: u64,
-}
+// #[repr(C)]
+// #[derive(Debug)]
+// pub struct FxrResourceContainer {
+//   pub allocator1: u64,
+//   pub scene_ctrl: u64,
+//   pub unk10: u64,
+//   pub allocator2: u64,
+//   pub fxr_list_head: *mut FxrListNode,
+//   pub resource_count: u64,
+// }
 
 macro_rules! if_else {
   (true, $true_block:block, $false_block:block) => {
@@ -111,8 +110,10 @@ macro_rules! define_games {
       $game_ident:ident {
         window_title: $title:literal,
         exe_names: [$($exe:literal),* $(,)?],
+        singleton_name: $singleton_name:literal,
         cssfx_unk_size: $cssfx_size:expr,
         gfx_manager_unk_size: $gfx_size:expr,
+        res_con_pad_size: $res_con_size:expr,
         allocator_pattern: $allocator_pattern:ident,
         patch_offsets_pattern: $patch_offsets_pattern:ident,
         prepare_pattern: $prepare_pattern:ident,
@@ -141,10 +142,17 @@ macro_rules! define_games {
 
         #[repr(C)]
         #[derive(Debug)]
+        pub struct [<$game_ident FxrResourceContainer>] {
+          pub pad: [u8; $res_con_size],
+          pub fxr_list_head: *mut FxrListNode,
+        }
+
+        #[repr(C)]
+        #[derive(Debug)]
         pub struct [<$game_ident GXFfxGraphicsResourceManager>] {
           pub vftable: u64,
           pub unk: [u8; $gfx_size],
-          pub resource_container: &'static mut FxrResourceContainer,
+          pub resource_container: &'static mut [<$game_ident FxrResourceContainer>],
         }
 
         #[repr(C)]
@@ -178,9 +186,9 @@ macro_rules! define_games {
           }
         }
 
-        impl DLRFLocatable for [<$game_ident CSSfx>] {
-          fn name() -> &'static str {
-            "CSSfx"
+        impl FromSingleton for [<$game_ident CSSfx>] {
+          fn name() -> Cow<'static, str> {
+            $singleton_name.into()
           }
         }
 
@@ -199,22 +207,22 @@ macro_rules! define_games {
                   let matched = match_instruction_pattern($allocator_pattern).ok_or(
                     FxrManagerError::InstructionPattern("get_allocator_call".to_string()),
                   )?;
-  
+
                   let capture = matched.captures.first().unwrap();
                   let offset =
                     i32::from_le_bytes(capture.bytes.as_slice().try_into().map_err(|_| {
                       FxrManagerError::InstructionPattern("get_allocator".to_string())
                     })?);
-  
+
                   let rip = capture.location + 4;
-  
+
                   if offset.is_positive() {
                     rip + offset as usize
                   } else {
                     rip - offset.unsigned_abs() as usize
                   }
                 } as usize;
-  
+
               unsafe {
                 Ok(Self {
                   patch_fxr_offset: std::mem::transmute(
@@ -254,7 +262,9 @@ macro_rules! define_games {
               );
 
               let sfx_imp = unsafe {
-                &mut *singleton::get_instance::<[<$game_ident CSSfx>]>()?.ok_or(FxrManagerError::CSSfxInstanceMissing)?
+                address_of::<[<$game_ident CSSfx>]>()
+                  .ok_or(FxrManagerError::CSSfxInstanceMissing)?
+                  .as_mut()
               };
 
               let fxr = sfx_imp
@@ -306,7 +316,9 @@ macro_rules! define_games {
           fn extract(&self, fxr_id: u32) -> Result<Vec<u8>, FxrManagerError> {
             if_else! ($extract, {
               let sfx_imp = unsafe {
-                &mut *singleton::get_instance::<[<$game_ident CSSfx>]>()?.ok_or(FxrManagerError::CSSfxInstanceMissing)?
+                address_of::<[<$game_ident CSSfx>]>()
+                  .ok_or(FxrManagerError::CSSfxInstanceMissing)?
+                  .as_mut()
               };
 
               let fxr = sfx_imp
@@ -318,9 +330,21 @@ macro_rules! define_games {
               unsafe {
                 if let Some(wrapper) = fxr.fxr_wrapper.as_mut() {
                   let fxr_ptr = wrapper.fxr as *const u8;
-                  let ev2_offset = *(fxr_ptr.add(0x80) as *const u32) as usize;
-                  let ev2_count = *(fxr_ptr.add(0x84) as *const u32) as usize;
-                  let total_size = ev2_offset + (ev2_count * 4);
+                  let version = *(fxr_ptr.add(0x6) as *const u16);
+                  let (ll_offset, ll_count) = if version == 5 {
+                    (
+                      *(fxr_ptr.add(0x80) as *const u32) as usize,
+                      *(fxr_ptr.add(0x84) as *const u32) as usize,
+                    )
+                  } else if version == 4 {
+                    (
+                      *(fxr_ptr.add(0x60) as *const u32) as usize,
+                      *(fxr_ptr.add(0x64) as *const u32) as usize,
+                    )
+                  } else {
+                    return Err(FxrManagerError::InvalidFxr);
+                  };
+                  let total_size = ll_offset + (ll_count * 4);
                   let mut bytes = vec![0u8; total_size];
                   std::ptr::copy_nonoverlapping(fxr_ptr, bytes.as_mut_ptr(), total_size);
                   return Ok(bytes);
@@ -338,15 +362,17 @@ macro_rules! define_games {
           fn list_ids(&self) -> Result<Vec<u32>, FxrManagerError> {
             if_else! ($extract, {
               let sfx_imp = unsafe {
-                &mut *singleton::get_instance::<[<$game_ident CSSfx>]>()?.ok_or(FxrManagerError::CSSfxInstanceMissing)?
+                address_of::<[<$game_ident CSSfx>]>()
+                  .ok_or(FxrManagerError::CSSfxInstanceMissing)?
+                  .as_mut()
               };
-  
+
               let ids: Vec<u32> = sfx_imp
                 .fxr_definition_iter()
                 .filter_map(|f| unsafe { f.as_mut() })
                 .map(|f| f.id)
                 .collect();
-  
+
               Ok(ids)
             }, {
               Err(FxrManagerError::UnsupportedOperation(
@@ -374,25 +400,29 @@ macro_rules! define_games {
 }
 
 define_games! {
-  // DarkSouls3 {
-  //   window_title: "DARK SOULS III",
-  //   exe_names: ["DarkSoulsIII.exe"],
-  //   cssfx_unk_size: 0x58,
-  //   gfx_manager_unk_size: 0x158,
-  //   allocator_pattern: GET_ALLOCATOR_PATTERN_DS3,
-  //   patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
-  //   prepare_pattern: WTF_FXR_PATTERN,
-  //   features: {
-  //     reload: true,
-  //     params: false,
-  //     extract: true
-  //   },
-  // },
+  DarkSouls3 {
+    window_title: "DARK SOULS™ III",
+    exe_names: ["DarkSoulsIII.exe"],
+    singleton_name: "SprjSfx",
+    cssfx_unk_size: 0x50,
+    gfx_manager_unk_size: 0x158,
+    res_con_pad_size: 0x10,
+    allocator_pattern: GET_ALLOCATOR_PATTERN_DS3,
+    patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
+    prepare_pattern: WTF_FXR_PATTERN,
+    features: {
+      reload: true,
+      params: false,
+      extract: true
+    },
+  },
   EldenRing {
     window_title: "ELDEN RING™",
     exe_names: ["eldenring.exe", "start_protected_game.exe"],
+    singleton_name: "CSSfx",
     cssfx_unk_size: 0x58,
     gfx_manager_unk_size: 0x158,
+    res_con_pad_size: 0x20,
     allocator_pattern: GET_ALLOCATOR_PATTERN,
     patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
     prepare_pattern: WTF_FXR_PATTERN,
@@ -405,8 +435,10 @@ define_games! {
   ArmoredCore6 {
     window_title: "ARMORED CORE™ VI FIRES OF RUBICON™",
     exe_names: ["armoredcore6.exe", "start_protected_game.exe"],
+    singleton_name: "CSSfx",
     cssfx_unk_size: 0x88,
     gfx_manager_unk_size: 0x58,
+    res_con_pad_size: 0x20,
     allocator_pattern: GET_ALLOCATOR_PATTERN,
     patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
     prepare_pattern: WTF_FXR_PATTERN,
@@ -419,8 +451,10 @@ define_games! {
   Nightreign {
     window_title: "ELDEN RING NIGHTREIGN",
     exe_names: ["nightreign.exe", "start_protected_game.exe"],
+    singleton_name: "CSSfx",
     cssfx_unk_size: 0x58,
     gfx_manager_unk_size: 0x58,
+    res_con_pad_size: 0x20,
     allocator_pattern: GET_ALLOCATOR_PATTERN,
     patch_offsets_pattern: PATCH_OFFSETS_PATTERN_NR,
     prepare_pattern: WTF_FXR_PATTERN_NR,
