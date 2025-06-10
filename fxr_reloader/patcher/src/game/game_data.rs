@@ -42,7 +42,7 @@ pub struct SupportedFeatures {
 #[derive(Debug, Clone, Copy)]
 pub struct GameData {
   pub name: &'static str,
-  pub window_title: &'static str,
+  pub product_name: &'static str,
   pub exe_names: &'static [&'static str],
   pub features: SupportedFeatures,
 }
@@ -95,6 +95,29 @@ pub struct FxrListNode {
 //   pub resource_count: u64,
 // }
 
+fn fxr_at(fxr_ptr: *const u8) -> Option<Vec<u8>> {
+  unsafe {
+    let version = *(fxr_ptr.add(0x6) as *const u16);
+    let (ll_offset, ll_count) = if version == 5 {
+      (
+        *(fxr_ptr.add(0x80) as *const u32) as usize,
+        *(fxr_ptr.add(0x84) as *const u32) as usize,
+      )
+    } else if version == 4 {
+      (
+        *(fxr_ptr.add(0x60) as *const u32) as usize,
+        *(fxr_ptr.add(0x64) as *const u32) as usize,
+      )
+    } else {
+      return None;
+    };
+    let total_size = ll_offset + (ll_count * 4);
+    let mut bytes = vec![0u8; total_size];
+    std::ptr::copy_nonoverlapping(fxr_ptr, bytes.as_mut_ptr(), total_size);
+    Some(bytes)
+  }
+}
+
 macro_rules! if_else {
   (true, $true_block:block, $false_block:block) => {
     $true_block
@@ -108,7 +131,7 @@ macro_rules! define_games {
   (
     $(
       $game_ident:ident {
-        window_title: $title:literal,
+        product_name: $title:literal,
         exe_names: [$($exe:literal),* $(,)?],
         singleton_name: $singleton_name:literal,
         cssfx_unk_size: $cssfx_size:expr,
@@ -131,7 +154,7 @@ macro_rules! define_games {
 
         pub const $game_ident: GameData = GameData {
           name: stringify!($game_ident),
-          window_title: $title,
+          product_name: $title,
           exe_names: [<$game_ident:upper _EXES>],
           features: SupportedFeatures {
             reload: $reload,
@@ -330,28 +353,52 @@ macro_rules! define_games {
               unsafe {
                 if let Some(wrapper) = fxr.fxr_wrapper.as_mut() {
                   let fxr_ptr = wrapper.fxr as *const u8;
-                  let version = *(fxr_ptr.add(0x6) as *const u16);
-                  let (ll_offset, ll_count) = if version == 5 {
-                    (
-                      *(fxr_ptr.add(0x80) as *const u32) as usize,
-                      *(fxr_ptr.add(0x84) as *const u32) as usize,
-                    )
-                  } else if version == 4 {
-                    (
-                      *(fxr_ptr.add(0x60) as *const u32) as usize,
-                      *(fxr_ptr.add(0x64) as *const u32) as usize,
-                    )
-                  } else {
-                    return Err(FxrManagerError::InvalidFxr);
-                  };
-                  let total_size = ll_offset + (ll_count * 4);
-                  let mut bytes = vec![0u8; total_size];
-                  std::ptr::copy_nonoverlapping(fxr_ptr, bytes.as_mut_ptr(), total_size);
-                  return Ok(bytes);
+                  return fxr_at(fxr_ptr).ok_or(FxrManagerError::InvalidFxr);
                 }
               }
 
               Err(FxrManagerError::FxrNotFound(fxr_id))
+            }, {
+              Err(FxrManagerError::UnsupportedOperation(
+                format!("FXR extraction is not supported in {}", stringify!($game_ident))
+              ))
+            })
+          }
+
+          fn extract_multiple(&self, fxr_ids: &Vec<u32>) -> Result<Vec<Option<Vec<u8>>>, FxrManagerError> {
+            if_else! ($extract, {
+              let sfx_imp = unsafe {
+                address_of::<[<$game_ident CSSfx>]>()
+                  .ok_or(FxrManagerError::CSSfxInstanceMissing)?
+                  .as_mut()
+              };
+
+              let mut fxr_map = std::collections::HashMap::new();
+              sfx_imp
+                .fxr_definition_iter()
+                .filter_map(|f| unsafe { f.as_mut() })
+                .for_each(|fxr| {
+                  fxr_map.insert(fxr.id, fxr);
+                });
+
+              let mut result = Vec::with_capacity(fxr_ids.len());
+              for id in fxr_ids {
+                match fxr_map.get(id) {
+                  Some(fxr) => unsafe {
+                    if let Some(wrapper) = (*fxr).fxr_wrapper.as_mut() {
+                      let fxr_ptr = wrapper.fxr as *const u8;
+                      result.push(fxr_at(fxr_ptr));
+                    } else {
+                      result.push(None);
+                    }
+                  },
+                  None => {
+                    result.push(None);
+                  }
+                }
+              }
+
+              Ok(result)
             }, {
               Err(FxrManagerError::UnsupportedOperation(
                 format!("FXR extraction is not supported in {}", stringify!($game_ident))
@@ -401,7 +448,7 @@ macro_rules! define_games {
 
 define_games! {
   DarkSouls3 {
-    window_title: "DARK SOULS™ III",
+    product_name: "DARK SOULS™ III",
     exe_names: ["DarkSoulsIII.exe"],
     singleton_name: "SprjSfx",
     cssfx_unk_size: 0x50,
@@ -417,7 +464,7 @@ define_games! {
     },
   },
   Sekiro {
-    window_title: "Sekiro™: Shadows Die Twice",
+    product_name: "Sekiro™: Shadows Die Twice",
     exe_names: ["sekiro.exe"],
     singleton_name: "SprjSfx",
     cssfx_unk_size: 0x58,
@@ -433,7 +480,7 @@ define_games! {
     },
   },
   EldenRing {
-    window_title: "ELDEN RING™",
+    product_name: "ELDEN RING™",
     exe_names: ["eldenring.exe", "start_protected_game.exe"],
     singleton_name: "CSSfx",
     cssfx_unk_size: 0x58,
@@ -449,7 +496,7 @@ define_games! {
     },
   },
   ArmoredCore6 {
-    window_title: "ARMORED CORE™ VI FIRES OF RUBICON™",
+    product_name: "ARMORED CORE™ VI FIRES OF RUBICON™",
     exe_names: ["armoredcore6.exe", "start_protected_game.exe"],
     singleton_name: "CSSfx",
     cssfx_unk_size: 0x88,
@@ -465,7 +512,7 @@ define_games! {
     },
   },
   Nightreign {
-    window_title: "ELDEN RING NIGHTREIGN",
+    product_name: "ELDEN RING NIGHTREIGN",
     exe_names: ["nightreign.exe", "start_protected_game.exe"],
     singleton_name: "CSSfx",
     cssfx_unk_size: 0x58,
@@ -484,7 +531,7 @@ define_games! {
 
 pub fn get_game_data_by_title(product_name: &str) -> Option<GameData> {
   SUPPORTED_GAMES.iter()
-    .find(|game| game.window_title == product_name)
+    .find(|game| game.product_name == product_name)
     .copied()
 }
 

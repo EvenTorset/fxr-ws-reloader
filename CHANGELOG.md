@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.2.0
+### Supported games
+- **Armored Core VI** 🔄️🪝
+- **Dark Souls III** 🔄️🪝
+- **Elden Ring** 🔄️🎛️🪝
+- **Elden Ring Nightreign** 🔄️🪝
+- **Sekiro** 🔄️🪝
+
+(May not work for all versions of the games. Features: 🔄️ = reload, 🎛️ = params, 🪝 = extract)
+
+### Changes
+- Added support for Nightreign 1.01.2. Dropped support for earlier versions.
+- Added a way to request extraction of multiple FXRs at once.
+
 ## v3.1.0
 ### Supported games
 - **Armored Core VI** 🔄️🪝

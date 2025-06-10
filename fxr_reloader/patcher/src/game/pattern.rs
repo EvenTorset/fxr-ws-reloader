@@ -272,30 +272,27 @@ pub(crate) const PATCH_OFFSETS_PATTERN_NR: &str = concat!(
   "01001... 10001011 10000100 ..100100 00011000 00000001 00000000 00000000"
 );
 
-// 146336401 48 89 4c        MOV        qword ptr [RSP + 0x8],RCX
+// 146e2451e 48 89 4c        MOV        qword ptr [RSP + 0x8],RCX
 //           24 08
-// 146336406 48 8d 64        LEA        RSP,[RSP + -0x8]
-//           24 f8
-// 14633640b 48 89 3c 24     MOV        qword ptr [RSP],RDI
-// 14633640f 48 81 ec        SUB        RSP,0x130
+// 146e24523 57              PUSH       RDI
+// 146e24524 48 81 ec        SUB        RSP,0x130
 //           30 01 00 00
-// 146336416 48 8d 7c        LEA        RDI,[RSP + 0x20]
+// 146e2452b 48 8d 7c        LEA        RDI,[RSP + 0x20]
 //           24 20
-// 14633641b b9 44 00        MOV        ECX,0x44
+// 146e24530 b9 44 00        MOV        ECX,0x44
 //           00 00
-// 146336420 b8 cc cc        MOV        EAX,0xcccccccc
+// 146e24535 b8 cc cc        MOV        EAX,0xcccccccc
 //           cc cc
-// 146336425 f3 ab           STOSD.REP  RDI
-// 146336427 48 8b 8c        MOV        RCX,qword ptr [RSP + 0x140]
+// 146e2453a f3 ab           STOSD.REP  RDI
+// 146e2453c 48 8b 8c        MOV        RCX,qword ptr [RSP + 0x140]
 //           24 40 01 
 //           00 00
-// 14633642f 48 8b 84        MOV        RAX,qword ptr [RSP + 0x140]
+// 146e24544 48 8b 84        MOV        RAX,qword ptr [RSP + 0x140]
 //           24 40 01 
 //           00 00
 pub(crate) const WTF_FXR_PATTERN_NR: &str = concat!(
   "01001... 10001001 01001100 ..100100 00001000",
-  "01001... 10001101 01100100 ..100100 11111000",
-  "01001... 10001001 00111100 ..100100",
+  "01010111",
   "01001... 10000001 11101100 00110000 00000001 00000000 00000000",
   "01001... 10001101 01111100 ..100100 00100000",
   "10111001 01000100 00000000 00000000 00000000",

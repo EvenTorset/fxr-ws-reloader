@@ -65,6 +65,8 @@ All requests to the WebSocket server should be JSON objects that include at leas
     - `vfx`: (Optional) The numerical VFX ID to change the `vfx_id` param field to. If not given, the `vfx_id` will not be changed.
   - `get_fxr`: This will extract a loaded FXR file from the game's memory and send it back base64-encoded. When this request type is used, the request needs one additional property:
     - `id`: The ID of the FXR to extract.
+  - `get_fxrs`: Just like the singular version above, but this instead takes a list of IDs and returns a list of base64-encoded FXRs in the same order as the ID list. IDs that could not be found will instead be null. When this request type is used, the request needs one additional property:
+    - `ids`: The IDs of the FXRs to extract.
   - `list_fxrs`: This will send back a list of all loaded FXR IDs.
 
 #### Reload FXR example request payload

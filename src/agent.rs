@@ -31,6 +31,8 @@ enum RequestType {
   SetSpEffectSFX,
   #[serde(rename = "get_fxr")]
   GetFXR,
+  #[serde(rename = "get_fxrs")]
+  GetFXRs,
   #[serde(rename = "list_fxrs")]
   ListFXRs,
   #[serde(other)]
@@ -42,6 +44,7 @@ const REQUEST_TYPE_NAMES: &[&str] = &[
   "set_resident_sfx",
   "set_sp_effect_sfx",
   "get_fxr",
+  "get_fxrs",
   "list_fxrs",
 ];
 
@@ -262,7 +265,7 @@ async fn handle_request(
               }
             }
           }
-          match patcher::patch_fxr(&game_data, fxr_bytes) {
+          match patcher::patch(&game_data, fxr_bytes) {
             Ok(_) => Response {
               request_id: request.request_id,
               success: true,
@@ -429,7 +432,7 @@ async fn handle_request(
         }
       };
 
-      let fxr_bytes = match patcher::extract_fxr(&game_data, fxr_id) {
+      let fxr_bytes = match patcher::extract(&game_data, fxr_id) {
         Ok(bytes) => bytes,
         Err(e) => return Response {
           request_id: request.request_id,
@@ -447,6 +450,48 @@ async fn handle_request(
         data: Some(serde_json::json!({ "fxr": base64_str })),
       }
     }
+    RequestType::GetFXRs => {
+      if !game_data.features.extract {
+        return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("FXR extraction is not supported in {}", game_data.name),
+          data: None,
+        };
+      }
+      let ids = match request.params.get("ids").and_then(|v| v.as_array()) {
+        Some(ids) => ids.iter()
+          .filter_map(|v| v.as_u64().map(|id| id as u32))
+          .collect::<Vec<_>>(),
+        None => return Response {
+          request_id: request.request_id,
+          success: false,
+          message: "Missing or invalid ids parameter".to_string(),
+          data: None,
+        }
+      };
+
+      let fxrs = match patcher::extract_multiple(&game_data, &ids) {
+        Ok(bytes_vec) => bytes_vec,
+        Err(e) => return Response {
+          request_id: request.request_id,
+          success: false,
+          message: format!("Failed to extract FXRs: {}", e),
+          data: None,
+        }
+      };
+
+      let base64_fxrs: Vec<Option<String>> = fxrs.into_iter()
+        .map(|maybe_bytes| maybe_bytes.map(|bytes| general_purpose::STANDARD.encode(&bytes)))
+        .collect();
+
+      Response {
+        request_id: request.request_id,
+        success: true,
+        message: "Successfully extracted FXRs".to_string(),
+        data: Some(serde_json::json!({ "fxrs": base64_fxrs })),
+      }
+    }
     RequestType::ListFXRs => {
       if !game_data.features.extract {
         return Response {
@@ -456,7 +501,7 @@ async fn handle_request(
           data: None,
         };
       }
-      let fxr_ids = match patcher::list_fxr_ids(&game_data) {
+      let fxr_ids = match patcher::list_ids(&game_data) {
         Ok(ids) => ids,
         Err(e) => return Response {
           request_id: request.request_id,
