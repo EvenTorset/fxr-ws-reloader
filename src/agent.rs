@@ -172,6 +172,11 @@ async fn start_websocket_server(port: u16) {
 }
 
 async fn handle_connection(stream: TcpStream) {
+  if let Ok(addr) = stream.peer_addr() {
+    println!("New WebSocket connection from {}", addr);
+  } else {
+    println!("New WebSocket connection from unknown address");
+  }
   let ws_stream = accept_async(stream).await.unwrap();
   let (mut write, mut read) = ws_stream.split();
 
