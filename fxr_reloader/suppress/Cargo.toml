@@ -1,0 +1,8 @@
+[package]
+name = "suppress"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+winapi = { version = "0.3", features = ["consoleapi", "handleapi", "fileapi", "winbase", "processenv", "winnt"] }
+lazy_static = "1.4"

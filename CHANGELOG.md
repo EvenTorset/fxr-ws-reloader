@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+### Supported games
+- **Armored Core VI** 🔄️🪝
+- **Dark Souls III** 🔄️🪝
+- **Elden Ring** 🔄️🎛️🪝
+- **Elden Ring Nightreign** 🔄️🪝
+- **Sekiro** 🔄️🪝
+
+(May not work for all versions of the games. Features: 🔄️ = reload, 🎛️ = params, 🪝 = extract)
+
+### Changes
+- Added an option to open a console window for the reloader to output useful information to. The console window can be enabled by setting the `console` property in the config file to `true`.
+
 ## v3.2.0
 ### Supported games
 - **Armored Core VI** 🔄️🪝

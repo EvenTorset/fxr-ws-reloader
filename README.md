@@ -32,11 +32,15 @@ external_dlls = [
 ### Elden Mod Loader
 If you are using [Elden Mod Loader](https://www.nexusmods.com/eldenring/mods/117) to load DLL mods, simply place the DLL and its config file in your mods folder.
 
-## Configuration
-The JSON config file that comes with the DLL can be modified to change the port number used by the WebSocket server:
-```jsonc
+The JSON config file that comes with the DLL supports the following options:
+- `port`: The port number used by the WebSocket server. Change this if you need the server to listen on a different port.
+- `console`: Set to `true` to open a console window for the reloader to output useful information. Set to `false` to disable the console window.
+
+Example:
+```json
 {
-  "port": 24621
+  "port": 24621,
+  "console": false
 }
 ```
 

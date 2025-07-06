@@ -16,6 +16,7 @@ use windows::Win32::System::Diagnostics::Debug::{
 
 use once_cell::sync::Lazy;
 use broadsword::scanner;
+use suppress::suppress_output;
 
 static PATTERN_CACHE: Lazy<Mutex<HashMap<String, Option<PatternResult>>>> =
   Lazy::new(|| Mutex::new(HashMap::new()));
@@ -110,7 +111,9 @@ pub(crate) fn match_instruction_pattern(pattern: &str) -> Option<PatternResult> 
       .flatten()
       .collect();
 
-    let pattern = scanner::Pattern::from_bit_pattern(pattern).unwrap();
+    let pattern = suppress_output(|| {
+      scanner::Pattern::from_bit_pattern(pattern).unwrap()
+    });
 
     text_sections.into_iter().find_map(|text_section| {
       let scan_slice = unsafe {

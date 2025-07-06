@@ -1152,6 +1152,7 @@ dependencies = [
  "pelite",
  "protocol",
  "serde",
+ "suppress",
  "windows 0.48.0",
 ]
 
@@ -1581,6 +1582,14 @@ name = "stopwatch2"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "911ece10388afa48417f99e01df038460b6249a3ee0255f6446a6881b702fbb4"
+
+[[package]]
+name = "suppress"
+version = "1.0.0"
+dependencies = [
+ "lazy_static",
+ "winapi",
+]
 
 [[package]]
 name = "syn"

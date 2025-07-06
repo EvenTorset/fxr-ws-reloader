@@ -15,10 +15,12 @@ use patcher::game::game_data::GameData;
 
 static RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 static PARAM_REQ_CHANNEL: OnceCell<(mpsc::Sender<ParamsRequestType>, mpsc::Receiver<Response>)> = OnceCell::new();
+static GAME_DATA: OnceCell<GameData> = OnceCell::new();
 
 #[derive(Deserialize, Debug)]
 struct Config {
   port: u16,
+  console: bool,
 }
 
 #[derive(Deserialize, Debug)]
@@ -100,29 +102,49 @@ pub extern "system" fn DllMain(
   _: *mut std::ffi::c_void,
 ) -> BOOL {
   if reason == 1 { // DLL_PROCESS_ATTACH
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    std::thread::spawn(|| {
+      let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    let config: Config = {
-      let config_path = get_dll_dir_path()
-        .map(|p| p.join("fxr_ws_reloader_config.json"))
-        .unwrap_or_else(|| PathBuf::from("fxr_ws_reloader_config.json"));
+      let game_data = match patcher::game::detection::detect_running_game() {
+        Ok(data) => data,
+        Err(e) => {
+          eprintln!("Failed to detect a supported game: {}", e);
+          return;
+        }
+      };
+      if GAME_DATA.set(game_data).is_err() {
+        eprintln!("Failed to set GAME_DATA");
+        return;
+      }
 
-      let config_str = std::fs::read_to_string(config_path)
-        .unwrap_or_else(|_| String::from(r#"{"port": 24621}"#));
-      serde_json::from_str(&config_str).unwrap_or(Config { port: 24621 })
-    };
+      let config: Config = {
+        let config_path = get_dll_dir_path()
+          .map(|p| p.join("fxr_ws_reloader_config.json"))
+          .unwrap_or_else(|| PathBuf::from("fxr_ws_reloader_config.json"));
 
-    let (tx, rx) = mpsc::channel::<ParamsRequestType>(32);
-    let (response_tx, response_rx) = mpsc::channel::<Response>(32);
-    PARAM_REQ_CHANNEL.set((tx.clone(), response_rx)).unwrap();
+        let config_str = std::fs::read_to_string(config_path)
+          .unwrap_or_else(|_| String::from(r#"{"port": 24621}"#));
+        serde_json::from_str(&config_str).unwrap_or(Config { port: 24621, console: false })
+      };
 
-    runtime.spawn(game_param_handler(rx, response_tx));
+      if config.console {
+        unsafe {
+          windows::Win32::System::Console::AllocConsole();
+        }
+      }
 
-    runtime.spawn(async move {
-      start_websocket_server(config.port).await;
+      let (tx, rx) = mpsc::channel::<ParamsRequestType>(32);
+      let (response_tx, response_rx) = mpsc::channel::<Response>(32);
+      PARAM_REQ_CHANNEL.set((tx.clone(), response_rx)).unwrap();
+
+      runtime.spawn(game_param_handler(rx, response_tx));
+
+      runtime.spawn(async move {
+        start_websocket_server(config.port).await;
+      });
+
+      RUNTIME.set(runtime).unwrap();
     });
-
-    RUNTIME.set(runtime).unwrap();
   } else if reason == 0 { // DLL_PROCESS_DETACH
     if let Some(_) = RUNTIME.get() {
       // Runtime will be dropped automatically when DLL is unloaded
@@ -134,7 +156,15 @@ pub extern "system" fn DllMain(
 async fn start_websocket_server(port: u16) {
   let addr = format!("127.0.0.1:{}", port);
   let listener = TcpListener::bind(&addr).await.unwrap();
-  println!("WebSocket server listening on: {}", addr);
+  let game_info = GAME_DATA.get()
+    .map(|g| format!(" | Game: {}", g.name))
+    .unwrap_or_else(|| " | Game: ERROR: Unsupported or undetected game".to_string());
+  println!(
+    "WebSocket server listening on: {} | Version: {}{}",
+    addr,
+    env!("CARGO_PKG_VERSION"),
+    game_info
+  );
 
   while let Ok((stream, _)) = listener.accept().await {
     tokio::spawn(handle_connection(stream));
@@ -145,13 +175,13 @@ async fn handle_connection(stream: TcpStream) {
   let ws_stream = accept_async(stream).await.unwrap();
   let (mut write, mut read) = ws_stream.split();
 
-  let game_data = match patcher::game::detection::detect_running_game() {
-    Ok(data) => data,
-    Err(e) => {
+  let game_data = match GAME_DATA.get() {
+    Some(data) => data.clone(),
+    None => {
       let response = serde_json::json!({
         "type": "server_info",
         "version": env!("CARGO_PKG_VERSION"),
-        "error": format!("Failed to detect game: {}", e)
+        "error": "Failed to detect a supported game."
       });
       if let Err(e) = write.send(Message::Text(response.to_string())).await {
         eprintln!("Failed to send error message: {}", e);
@@ -242,6 +272,7 @@ async fn handle_request(
   match request.request_type {
     RequestType::ReloadFXRs => {
       if !game_data.features.reload {
+        eprintln!("FXR reloading is not supported in {}", game_data.name);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -256,30 +287,49 @@ async fn handle_request(
             if let Some(base64_str) = fxr.as_str() {
               match general_purpose::STANDARD.decode(base64_str) {
                 Ok(bytes) => fxr_bytes.push(bytes),
-                Err(e) => return Response {
-                  request_id: request.request_id,
-                  success: false,
-                  message: format!("Failed to decode base64 FXR: {}", e),
-                  data: None,
+                Err(e) => {
+                  eprintln!("Failed to decode base64 FXR: {}", e);
+                  return Response {
+                    request_id: request.request_id,
+                    success: false,
+                    message: format!("Failed to decode base64 FXR: {}", e),
+                    data: None,
+                  }
                 }
               }
             }
           }
+          let fxr_id_opt = if fxr_bytes.len() == 1 && fxr_bytes[0].len() >= 0x10 {
+            Some(u32::from_le_bytes(fxr_bytes[0][0xc..0x10].try_into().unwrap()))
+          } else {
+            None
+          };
           match patcher::patch(&game_data, fxr_bytes) {
-            Ok(_) => Response {
-              request_id: request.request_id,
-              success: true,
-              message: "Successfully reloaded FXR".to_string(),
-              data: None,
+            Ok(_) => {
+              if let Some(id) = fxr_id_opt {
+                println!("Reloaded FXR {}", id);
+              } else {
+                println!("Reloaded {} FXRs", fxr_array.len());
+              }
+              Response {
+                request_id: request.request_id,
+                success: true,
+                message: "Successfully reloaded FXR".to_string(),
+                data: None,
+              }
             },
-            Err(e) => Response {
-              request_id: request.request_id,
-              success: false,
-              message: format!("Failed to patch FXR: {}", e),
-              data: None,
+            Err(e) => {
+              eprintln!("Failed to patch FXR: {}", e);
+              Response {
+                request_id: request.request_id,
+                success: false,
+                message: format!("Failed to patch FXR: {}", e),
+                data: None,
+              }
             }
           }
         } else {
+          eprintln!("Invalid fxrs parameter: expected array");
           Response {
             request_id: request.request_id,
             success: false,
@@ -288,6 +338,7 @@ async fn handle_request(
           }
         }
       } else {
+        eprintln!("Missing fxrs parameter");
         Response {
           request_id: request.request_id,
           success: false,
@@ -298,6 +349,7 @@ async fn handle_request(
     }
     RequestType::SetResidentSFX => {
       if !game_data.features.params {
+        eprintln!("Parameter modification is not supported in {}", game_data.name);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -307,35 +359,45 @@ async fn handle_request(
       }
       let weapon_id = match request.params.get("weapon").and_then(|v| v.as_u64()) {
         Some(id) => id as u32,
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid weapon parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid weapon parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid weapon parameter".to_string(),
+            data: None,
+          }
         }
       };
 
       let sfx_id = match request.params.get("sfx").and_then(|v| v.as_u64()) {
         Some(id) => id as i32,
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid sfx parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid sfx parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid sfx parameter".to_string(),
+            data: None,
+          }
         }
       };
 
       let dmy_id = match request.params.get("dmy").and_then(|v| v.as_u64()) {
         Some(id) => id as i32,
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid dmy parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid dmy parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid dmy parameter".to_string(),
+            data: None,
+          }
         }
       };
 
       if let Err(e) = params_sender.send(ParamsRequestType::SetResidentSFX { weapon_id, sfx_id, dmy_id }).await {
+        eprintln!("Failed to send params request: {}", e);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -344,6 +406,7 @@ async fn handle_request(
         };
       }
 
+      println!("Set resident SFX: weapon_id={}, sfx_id={}, dmy_id={}", weapon_id, sfx_id, dmy_id);
       Response {
         request_id: request.request_id,
         success: true,
@@ -353,6 +416,7 @@ async fn handle_request(
     }
     RequestType::SetSpEffectSFX => {
       if !game_data.features.params {
+        eprintln!("Parameter modification is not supported in {}", game_data.name);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -362,31 +426,40 @@ async fn handle_request(
       }
       let sp_effect_id = match request.params.get("spEffect").and_then(|v| v.as_u64()) {
         Some(id) => id as u32,
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid spEffect parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid spEffect parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid spEffect parameter".to_string(),
+            data: None,
+          }
         }
       };
 
       let sfx_id = match request.params.get("sfx").and_then(|v| v.as_u64()) {
         Some(id) => id as i32,
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid sfx parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid sfx parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid sfx parameter".to_string(),
+            data: None,
+          }
         }
       };
 
       let dmy_id = match request.params.get("dmy").and_then(|v| v.as_u64()) {
         Some(id) => id as i16,
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid dmy parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid dmy parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid dmy parameter".to_string(),
+            data: None,
+          }
         }
       };
 
@@ -398,6 +471,7 @@ async fn handle_request(
         dmy_id, 
         target_vfx_id 
       }).await {
+        eprintln!("Failed to send params request: {}", e);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -406,6 +480,7 @@ async fn handle_request(
         };
       }
 
+      println!("Set SpEffect SFX: sp_effect_id={}, sfx_id={}, dmy_id={}, target_vfx_id={:?}", sp_effect_id, sfx_id, dmy_id, target_vfx_id);
       Response {
         request_id: request.request_id,
         success: true,
@@ -415,6 +490,7 @@ async fn handle_request(
     }
     RequestType::GetFXR => {
       if !game_data.features.extract {
+        eprintln!("FXR extraction is not supported in {}", game_data.name);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -424,25 +500,32 @@ async fn handle_request(
       }
       let fxr_id = match request.params.get("id").and_then(|v| v.as_u64()) {
         Some(id) => id as u32,
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid id parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid id parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid id parameter".to_string(),
+            data: None,
+          }
         }
       };
 
       let fxr_bytes = match patcher::extract(&game_data, fxr_id) {
         Ok(bytes) => bytes,
-        Err(e) => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: format!("Failed to extract FXR: {}", e),
-          data: None,
+        Err(e) => {
+          eprintln!("Failed to extract FXR: {}", e);
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: format!("Failed to extract FXR: {}", e),
+            data: None,
+          }
         }
       };
 
       let base64_str = general_purpose::STANDARD.encode(&fxr_bytes);
+      println!("Extracted FXR {}", fxr_id);
       Response {
         request_id: request.request_id,
         success: true,
@@ -452,6 +535,7 @@ async fn handle_request(
     }
     RequestType::GetFXRs => {
       if !game_data.features.extract {
+        eprintln!("FXR extraction is not supported in {}", game_data.name);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -463,21 +547,27 @@ async fn handle_request(
         Some(ids) => ids.iter()
           .filter_map(|v| v.as_u64().map(|id| id as u32))
           .collect::<Vec<_>>(),
-        None => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: "Missing or invalid ids parameter".to_string(),
-          data: None,
+        None => {
+          eprintln!("Missing or invalid ids parameter");
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: "Missing or invalid ids parameter".to_string(),
+            data: None,
+          }
         }
       };
 
       let fxrs = match patcher::extract_multiple(&game_data, &ids) {
         Ok(bytes_vec) => bytes_vec,
-        Err(e) => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: format!("Failed to extract FXRs: {}", e),
-          data: None,
+        Err(e) => {
+          eprintln!("Failed to extract FXRs: {}", e);
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: format!("Failed to extract FXRs: {}", e),
+            data: None,
+          }
         }
       };
 
@@ -485,6 +575,11 @@ async fn handle_request(
         .map(|maybe_bytes| maybe_bytes.map(|bytes| general_purpose::STANDARD.encode(&bytes)))
         .collect();
 
+      if ids.len() == 1 {
+        println!("Extracted FXR {}", ids[0]);
+      } else {
+        println!("Extracted {} FXRs", base64_fxrs.len());
+      }
       Response {
         request_id: request.request_id,
         success: true,
@@ -494,6 +589,7 @@ async fn handle_request(
     }
     RequestType::ListFXRs => {
       if !game_data.features.extract {
+        eprintln!("FXR listing is not supported in {}", game_data.name);
         return Response {
           request_id: request.request_id,
           success: false,
@@ -503,14 +599,18 @@ async fn handle_request(
       }
       let fxr_ids = match patcher::list_ids(&game_data) {
         Ok(ids) => ids,
-        Err(e) => return Response {
-          request_id: request.request_id,
-          success: false,
-          message: format!("Failed to list FXRs: {}", e),
-          data: None,
+        Err(e) => {
+          eprintln!("Failed to list FXRs: {}", e);
+          return Response {
+            request_id: request.request_id,
+            success: false,
+            message: format!("Failed to list FXRs: {}", e),
+            data: None,
+          }
         }
       };
 
+      println!("Listed {} FXR(s)", fxr_ids.len());
       Response {
         request_id: request.request_id,
         success: true,
@@ -518,11 +618,14 @@ async fn handle_request(
         data: Some(serde_json::json!({ "fxrs": fxr_ids })),
       }
     }
-    RequestType::Unknown => Response {
-      request_id: request.request_id,
-      success: false,
-      message: format!("Invalid request type. Valid types are: {}", REQUEST_TYPE_NAMES.join(", ")),
-      data: None,
+    RequestType::Unknown => {
+      eprintln!("Invalid request type. Valid types are: {}", REQUEST_TYPE_NAMES.join(", "));
+      Response {
+        request_id: request.request_id,
+        success: false,
+        message: format!("Invalid request type. Valid types are: {}", REQUEST_TYPE_NAMES.join(", ")),
+        data: None,
+      }
     }
   }
 }
