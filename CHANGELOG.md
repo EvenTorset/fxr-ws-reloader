@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v3.3.0
 ### Supported games
 - **Armored Core VI** 🔄️🪝
 - **Dark Souls III** 🔄️🪝
@@ -11,7 +11,9 @@
 (May not work for all versions of the games. Features: 🔄️ = reload, 🎛️ = params, 🪝 = extract)
 
 ### Changes
+- Reloading should now work across pretty much every version of the supported games. This fixes the reloader not working for NR 1.01.4 and 1.01.5.
 - Added an option to open a console window for the reloader to output useful information to. The console window can be enabled by setting the `console` property in the config file to `true`.
+- Subsequent non-params requests should now be slightly faster. The first request may be a bit slower.
 
 ## v3.2.0
 ### Supported games

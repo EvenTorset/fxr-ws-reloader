@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use pelite::pe::Pe;
 use pelite::pe::PeView;
 use protocol::GameDetectionError;
@@ -14,7 +12,6 @@ pub fn detect_running_game() -> Result<GameData, GameDetectionError> {
     PeView::module(handle.0 as *const u8)
   };
 
-  let _ = find_text_section(&header)?;
   let product_name = select_product_name(&header)?;
 
   // Find the game data entry that matches this window title
@@ -39,12 +36,4 @@ fn select_product_name(
   });
 
   product_name.ok_or(GameDetectionError::MissingProductName)
-}
-
-/// Attempts to find the .text section
-fn find_text_section(header: &PeView) -> Result<Range<u32>, GameDetectionError> {
-  header.section_headers().iter()
-    .find(|s| s.name_bytes() == b".text")
-    .map(|s| s.virtual_range())
-    .ok_or(GameDetectionError::MissingTextSection)
 }

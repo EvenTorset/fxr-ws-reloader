@@ -1,6 +1,6 @@
 use protocol::FxrManagerError;
 
-pub(crate) mod pattern;
+pub(crate) mod scanner;
 pub mod detection;
 pub mod game_data;
 

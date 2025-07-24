@@ -2,25 +2,33 @@
 
 use std::ffi::c_void;
 use paste::paste;
-use super::pattern::{
-  match_instruction_pattern,
-  GET_ALLOCATOR_PATTERN_DS3,
-  GET_ALLOCATOR_PATTERN,
-  PATCH_OFFSETS_PATTERN,
-  WTF_FXR_PATTERN,
-  PATCH_OFFSETS_PATTERN_NR,
-  WTF_FXR_PATTERN_NR,
-};
+use crate::resolve_func;
+use super::scanner::get_pe_view;
 use protocol::FxrManagerError;
 use std::collections::HashSet;
 use crate::game::FxrManager;
 use from_singleton::{FromSingleton, address_of};
 use std::borrow::Cow;
+use pelite::pattern::Atom;
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 type FxrAllocatorGetter = unsafe extern "system" fn() -> usize;
 type AllocateFxr = unsafe extern "system" fn(usize, usize, usize) -> usize;
 type PatchFxrOffsets = unsafe extern "system" fn(usize, usize, usize) -> *const std::ffi::c_void;
 type PrepareFxr = unsafe extern "system" fn(usize) -> *const std::ffi::c_void;
+
+const PATCH_FXR_OFFSETS_CALL_PATTERN: &[Atom] = pelite::pattern!(
+  "4c 8b 44 24 20 48 8b 54 24 20 48 8b 4c 24 20 e8 $ { ' }"
+);
+
+const PREPARE_FXR_CALL_PATTERN: &[Atom] = pelite::pattern!(
+  "33 c0 e9 ? ? ? ? 48 8b 4c 24 20 e8 $ { ' }"
+);
+
+const GET_ALLOCATOR_CALL_PATTERN: &[Atom] = pelite::pattern!(
+  "48 8b 44 24 28 8b 40 04 c1 e8 10 83 f8 ? ? ? 33 c0 e9 ? ? ? ? e8 $ { ' }"
+);
 
 pub unsafe extern "system" fn null_allocator() -> usize { 0 }
 
@@ -137,7 +145,7 @@ macro_rules! define_games {
         cssfx_unk_size: $cssfx_size:expr,
         gfx_manager_unk_size: $gfx_size:expr,
         res_con_pad_size: $res_con_size:expr,
-        allocator_pattern: $allocator_pattern:ident,
+        get_allocator_pattern: $get_allocator_pattern:ident,
         patch_offsets_pattern: $patch_offsets_pattern:ident,
         prepare_pattern: $prepare_pattern:ident,
         features: {
@@ -215,57 +223,36 @@ macro_rules! define_games {
           }
         }
 
-        #[derive(Debug)]
         pub struct [<$game_ident FxrManager>] {
-          patch_fxr_offset: PatchFxrOffsets,
+          patch_fxr_offsets: PatchFxrOffsets,
           prepare_fxr: PrepareFxr,
-          fxr_allocator_getter: FxrAllocatorGetter,
+          allocate: Box<dyn Fn(usize, usize) -> usize + Send + Sync>,
         }
 
         impl [<$game_ident FxrManager>] {
           pub fn new() -> Result<Self, FxrManagerError> {
             if_else! ($reload, {
-              let get_allocator =
-                {
-                  let matched = match_instruction_pattern($allocator_pattern).ok_or(
-                    FxrManagerError::InstructionPattern("get_allocator_call".to_string()),
-                  )?;
-
-                  let capture = matched.captures.first().unwrap();
-                  let offset =
-                    i32::from_le_bytes(capture.bytes.as_slice().try_into().map_err(|_| {
-                      FxrManagerError::InstructionPattern("get_allocator".to_string())
-                    })?);
-
-                  let rip = capture.location + 4;
-
-                  if offset.is_positive() {
-                    rip + offset as usize
-                  } else {
-                    rip - offset.unsigned_abs() as usize
-                  }
-                } as usize;
-
-              unsafe {
-                Ok(Self {
-                  patch_fxr_offset: std::mem::transmute(
-                    match_instruction_pattern($patch_offsets_pattern)
-                      .ok_or(FxrManagerError::InstructionPattern("patch_fxr".to_string()))?
-                      .location,
-                  ),
-                  prepare_fxr: std::mem::transmute(
-                    match_instruction_pattern($prepare_pattern)
-                      .ok_or(FxrManagerError::InstructionPattern("wtf_fxr".to_string()))?
-                      .location,
-                  ),
-                  fxr_allocator_getter: std::mem::transmute(get_allocator),
-                })
-              }
+              let pe = get_pe_view().unwrap();
+              let get_allocator = resolve_func!("get_allocator", $get_allocator_pattern, 1, FxrAllocatorGetter, &pe);
+              let allocator = unsafe { get_allocator() };
+              let allocate_fn: AllocateFxr = unsafe {
+                std::mem::transmute(
+                  *((*(allocator as *const usize) + 0x50) as *const usize)
+                )
+              };
+              let allocate = Box::new(move |size: usize, align: usize| unsafe {
+                allocate_fn(allocator, size, align)
+              });
+              Ok(Self {
+                patch_fxr_offsets: resolve_func!("patch_fxr_offsets", $patch_offsets_pattern, 1, PatchFxrOffsets, &pe),
+                prepare_fxr: resolve_func!("prepare_fxr", $prepare_pattern, 1, PrepareFxr, &pe),
+                allocate,
+              })
             }, {
               Ok(Self {
-                patch_fxr_offset: null_patcher,
+                patch_fxr_offsets: null_patcher,
                 prepare_fxr: null_preparer,
-                fxr_allocator_getter: null_allocator,
+                allocate: Box::new(|_, _| 0),
               })
             })
           }
@@ -296,32 +283,17 @@ macro_rules! define_games {
                 .find(|f| f.id == fxr_id);
 
               if let Some(fxr) = fxr {
-                let allocator = unsafe { (self.fxr_allocator_getter)() };
-
-                let allocate: AllocateFxr = unsafe {
-                  std::mem::transmute(
-                    *((*(allocator as *const usize) + 0x50) as *const usize)
-                  )
-                };
-
-                let allocation = unsafe {
-                  allocate(allocator, fxr_bytes.len(), 0x10)
-                };
-
                 unsafe {
+                  let allocation = (self.allocate)(fxr_bytes.len(), 0x10);
                   std::ptr::copy_nonoverlapping(
                     fxr_bytes.as_ptr(),
                     allocation as *mut u8,
                     fxr_bytes.len(),
                   );
-                }
 
-                unsafe {
-                  (self.patch_fxr_offset)(allocation, allocation, allocation);
+                  (self.patch_fxr_offsets)(allocation, allocation, allocation);
                   (self.prepare_fxr)(allocation);
-                }
 
-                unsafe {
                   if let Some(wrapper) = fxr.fxr_wrapper.as_mut() {
                     wrapper.fxr = allocation;
                   }
@@ -434,13 +406,23 @@ macro_rules! define_games {
         $($game_ident),*
       ];
 
-      pub(crate) fn fxr_manager_for(game: &GameData) -> Result<Box<dyn FxrManager>, FxrManagerError> {
-        match game.name {
-          $(
-            stringify!($game_ident) => Ok(Box::new([<$game_ident FxrManager>]::new()?)),
-          )*
-          _ => Err(FxrManagerError::UnsupportedGame),
+      static FXR_MANAGER_CACHE: Lazy<Mutex<Option<&'static (dyn FxrManager + Send + Sync)>>> = Lazy::new(|| Mutex::new(None));
+
+      pub(crate) fn fxr_manager_for(game: &GameData) -> Result<&'static (dyn FxrManager + Send + Sync), FxrManagerError> {
+        let mut cache = FXR_MANAGER_CACHE.lock().unwrap();
+        if let Some(manager) = *cache {
+          return Ok(manager);
         }
+
+        let manager: Box<dyn FxrManager + Send + Sync> = match game.name {
+          $(
+            stringify!($game_ident) => Box::new([<$game_ident FxrManager>]::new()?),
+          )*
+          _ => return Err(FxrManagerError::UnsupportedGame),
+        };
+        let static_manager: &'static (dyn FxrManager + Send + Sync) = Box::leak(manager);
+        *cache = Some(static_manager);
+        Ok(static_manager)
       }
     }
   };
@@ -454,9 +436,9 @@ define_games! {
     cssfx_unk_size: 0x50,
     gfx_manager_unk_size: 0x158,
     res_con_pad_size: 0x10,
-    allocator_pattern: GET_ALLOCATOR_PATTERN_DS3,
-    patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
-    prepare_pattern: WTF_FXR_PATTERN,
+    get_allocator_pattern: GET_ALLOCATOR_CALL_PATTERN,
+    patch_offsets_pattern: PATCH_FXR_OFFSETS_CALL_PATTERN,
+    prepare_pattern: PREPARE_FXR_CALL_PATTERN,
     features: {
       reload: true,
       params: false,
@@ -470,9 +452,9 @@ define_games! {
     cssfx_unk_size: 0x58,
     gfx_manager_unk_size: 0x158,
     res_con_pad_size: 0x20,
-    allocator_pattern: GET_ALLOCATOR_PATTERN,
-    patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
-    prepare_pattern: WTF_FXR_PATTERN,
+    get_allocator_pattern: GET_ALLOCATOR_CALL_PATTERN,
+    patch_offsets_pattern: PATCH_FXR_OFFSETS_CALL_PATTERN,
+    prepare_pattern: PREPARE_FXR_CALL_PATTERN,
     features: {
       reload: true,
       params: false,
@@ -486,9 +468,9 @@ define_games! {
     cssfx_unk_size: 0x58,
     gfx_manager_unk_size: 0x158,
     res_con_pad_size: 0x20,
-    allocator_pattern: GET_ALLOCATOR_PATTERN,
-    patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
-    prepare_pattern: WTF_FXR_PATTERN,
+    get_allocator_pattern: GET_ALLOCATOR_CALL_PATTERN,
+    patch_offsets_pattern: PATCH_FXR_OFFSETS_CALL_PATTERN,
+    prepare_pattern: PREPARE_FXR_CALL_PATTERN,
     features: {
       reload: true,
       params: true,
@@ -502,9 +484,9 @@ define_games! {
     cssfx_unk_size: 0x88,
     gfx_manager_unk_size: 0x58,
     res_con_pad_size: 0x20,
-    allocator_pattern: GET_ALLOCATOR_PATTERN,
-    patch_offsets_pattern: PATCH_OFFSETS_PATTERN,
-    prepare_pattern: WTF_FXR_PATTERN,
+    get_allocator_pattern: GET_ALLOCATOR_CALL_PATTERN,
+    patch_offsets_pattern: PATCH_FXR_OFFSETS_CALL_PATTERN,
+    prepare_pattern: PREPARE_FXR_CALL_PATTERN,
     features: {
       reload: true,
       params: false,
@@ -518,9 +500,9 @@ define_games! {
     cssfx_unk_size: 0x58,
     gfx_manager_unk_size: 0x58,
     res_con_pad_size: 0x20,
-    allocator_pattern: GET_ALLOCATOR_PATTERN,
-    patch_offsets_pattern: PATCH_OFFSETS_PATTERN_NR,
-    prepare_pattern: WTF_FXR_PATTERN_NR,
+    get_allocator_pattern: GET_ALLOCATOR_CALL_PATTERN,
+    patch_offsets_pattern: PATCH_FXR_OFFSETS_CALL_PATTERN,
+    prepare_pattern: PREPARE_FXR_CALL_PATTERN,
     features: {
       reload: true,
       params: false,
